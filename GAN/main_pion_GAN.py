@@ -22,15 +22,15 @@ random.seed(manualSeed)
 torch.manual_seed(manualSeed)
 
 # Number of workers for dataloader
-workers = 5
+workers = 35
 # Batch size during training
-batch_size = 128
+batch_size = 32
 # Size of z latent vector (i.e. size of generator input)
 nz = 100
 # Number of training epochs
-num_epochs = 241
+num_epochs = 50
 # Learning rate for optimizers
-lr = 0.00002
+lr = 0.00001
 # Beta1 hyperparam for Adam optimizers
 beta1 = 0.5
 # Number of GPUs available. Use 0 for CPU mode.
@@ -43,8 +43,8 @@ FloatTensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 
 
-PATH_save = '/beegfs/desy/user/akorol/trained_models/pion_gan/pion_gan_{}.pth'
-PATH_chechpoint = '/beegfs/desy/user/akorol/trained_models/pion_gan/pion_gan_160.pth'
+PATH_save = '/beegfs/desy/user/akorol/trained_models/pion_gan/condition_pion_gan_{}.pth'
+PATH_chechpoint = '/beegfs/desy/user/akorol/trained_models/pion_gan/pion_gan_20.pth'
 
 def save(netG, netD, omtim_G, optim_D, epoch, loss, scores, path_to_save, time_stats):
     torch.save({
@@ -71,7 +71,7 @@ netG.apply(pion_GAN.weights_init)
 criterion = nn.BCEWithLogitsLoss()
 
 # Optimizers
-optimizer_G = optim.Adam(netG.parameters(), lr=lr*2, betas=(beta1, 0.999))
+optimizer_G = optim.Adam(netG.parameters(), lr=lr*100, betas=(beta1, 0.999))
 optimizer_D = optim.Adam(netD.parameters(), lr=lr, betas=(beta1, 0.999))
 
 # netD, optimizer_D = amp.initialize(netD, optimizer_D, opt_level="O1")
@@ -131,10 +131,13 @@ paths_list = ['/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part1.
               '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part2.hdf5',
               '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part3.hdf5',
               '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part4.hdf5',
-              '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part5.hdf5'
+              '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part5.hdf5',
+              '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part6.hdf5',
+              '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part7.hdf5'
               ]
+
 train_data = PionsDataset(paths_list)
-dataloader = DataLoader(train_data, shuffle=True, batch_size=batch_size, num_workers=30)
+dataloader = DataLoader(train_data, shuffle=True, batch_size=batch_size, num_workers=workers)
 print('done')
 
 print('Start training loop')
@@ -148,8 +151,9 @@ for epoch in tqdm(range(num_epochs)):
         netG.train()
         btch_sz = len(batch['shower'])
         real_showers = Variable(batch['shower']).float().to(device)
-        real_showers[real_showers<0.3] = 0
-        real_energys = Variable(batch['energy']*0).float().to(device)
+#         real_showers[real_showers<0.3] = 0
+#         real_energys = Variable(batch['energy']*0).float().to(device)
+        real_free_path = batch['free_path'].float().to(device).reshape(btch_sz, 1, 1, 1, 1)
 
         # Adversarial ground truths
         valid_label = Variable(FloatTensor(btch_sz, 1).fill_(1.0), requires_grad=False)
@@ -162,7 +166,7 @@ for epoch in tqdm(range(num_epochs)):
         netD.zero_grad()
 
         # Forward pass real batch through Disctiminator
-        output = netD(real_showers, real_energys)
+        output = netD(real_showers, real_free_path)
 
         # Calculate loss on all-real batch
         errD_real = criterion(output, valid_label)
@@ -178,15 +182,17 @@ for epoch in tqdm(range(num_epochs)):
 #         noise = torch.randn(btch_sz, nz, 1, 1, 1, device=device)
         noise = torch.FloatTensor(btch_sz, 100, 1, 1, 1).uniform_(-1, 1)
         # labels for Generator
+        gen_free_path = torch.Tensor(btch_sz, 1, 1, 1, 1).uniform_(1, 49).type(torch.int)
+        gen_free_path = gen_free_path.to(device).float()
 #         gen_labels = np.random.uniform(10, 100, btch_sz)
 #         gen_labels = Variable(FloatTensor(gen_labels))
 #         gen_labels = gen_labels.view(btch_sz, 1, 1, 1, 1)*0
 
         # Generate fake image batch with G
-        fake_shower = netG(noise.to(device), 0)
+        fake_shower = netG(noise.to(device), gen_free_path)
 
         # Classify all fake batch with D
-        output = netD(fake_shower, 0)
+        output = netD(fake_shower, gen_free_path)
 
         # Calculate D's loss on the all-fake batch
         errD_fake = criterion(output, fake_label)
@@ -210,7 +216,8 @@ for epoch in tqdm(range(num_epochs)):
         netG.zero_grad()
 
         # Forward pass of all-fake batch through D
-        output = netD(fake_shower, 0)
+        gen_free_path = 48 - gen_free_path + 1
+        output = netD(fake_shower, gen_free_path)
 
         # Calculate G's loss based on this output
         errG = criterion(output, valid_label)
@@ -241,7 +248,7 @@ for epoch in tqdm(range(num_epochs)):
     time_stats_epoch = np.append(time_stats_epoch, epoch_t)
     time_stats_calc = np.append(time_stats_calc, calculation_time)
 
-    if epoch%20 == 0:
+    if epoch%5 == 0:
         time_stats = np.array([time_stats_epoch, time_stats_calc])
         loss =  np.array([G_losses, D_losses])
         D_scores = np.array([D_scores_x, D_scores_z1, D_scores_z2])
