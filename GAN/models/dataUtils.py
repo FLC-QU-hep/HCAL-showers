@@ -33,7 +33,7 @@ class PionsDataset(Dataset):
 
         layer_energy = file['layers'][index].sum(axis=1).sum(axis=1)
         try:
-            free_path = 48 - np.where(np.diff(layer_energy) > 11)[0][0] + 1
+            free_path = 49 - np.where(np.diff(layer_energy) > 11)[0][0]
         except:
             free_path = 1
 

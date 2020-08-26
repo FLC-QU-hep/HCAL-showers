@@ -7,7 +7,7 @@ import torch.nn.parallel
 import torch.optim as optim
 from torch.autograd.variable import Variable
 import numpy as np
-import models.GAN_pi as pion_GAN
+import models.GAN_pi_2 as pion_GAN
 from torch.utils.data import DataLoader
 from models.dataUtils import PionsDataset
 from apex import amp
@@ -30,7 +30,8 @@ nz = 100
 # Number of training epochs
 num_epochs = 50
 # Learning rate for optimizers
-lr = 0.00001
+lr_D = 0.00001
+lr_G = 0.001
 # Beta1 hyperparam for Adam optimizers
 beta1 = 0.5
 # Number of GPUs available. Use 0 for CPU mode.
@@ -43,8 +44,8 @@ FloatTensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 
 
-PATH_save = '/beegfs/desy/user/akorol/trained_models/pion_gan/condition_pion_gan_{}.pth'
-PATH_chechpoint = '/beegfs/desy/user/akorol/trained_models/pion_gan/pion_gan_20.pth'
+PATH_save = '/beegfs/desy/user/akorol/trained_models/pion_gan/condition_pion_gan_newG_{}.pth'
+PATH_chechpoint = '/beegfs/desy/user/akorol/trained_models/pion_gan/condition_pion_gan_correctLabels_50.pth'
 
 def save(netG, netD, omtim_G, optim_D, epoch, loss, scores, path_to_save, time_stats):
     torch.save({
@@ -71,8 +72,8 @@ netG.apply(pion_GAN.weights_init)
 criterion = nn.BCEWithLogitsLoss()
 
 # Optimizers
-optimizer_G = optim.Adam(netG.parameters(), lr=lr*100, betas=(beta1, 0.999))
-optimizer_D = optim.Adam(netD.parameters(), lr=lr, betas=(beta1, 0.999))
+optimizer_G = optim.Adam(netG.parameters(), lr=lr_G, betas=(beta1, 0.999))
+optimizer_D = optim.Adam(netD.parameters(), lr=lr_D, betas=(beta1, 0.999))
 
 # netD, optimizer_D = amp.initialize(netD, optimizer_D, opt_level="O1")
 # netG, optimizer_G = amp.initialize(netG, optimizer_G, opt_level="O1")
@@ -127,18 +128,26 @@ netD.train()
 
 
 print('loading data...')
-paths_list = ['/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part1.hdf5',
-              '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part2.hdf5',
-              '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part3.hdf5',
-              '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part4.hdf5',
-              '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part5.hdf5',
-              '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part6.hdf5',
-              '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part7.hdf5'
-              ]
+paths_list = [
+    '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part1.hdf5',
+    '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part2.hdf5',
+    '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part3.hdf5',
+    '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part4.hdf5',
+    '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part5.hdf5',
+    '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part6.hdf5',
+    '/beegfs/desy/user/eren/data_generator/pion/hcal_only/pion40part7.hdf5'
+]
 
 train_data = PionsDataset(paths_list)
 dataloader = DataLoader(train_data, shuffle=True, batch_size=batch_size, num_workers=workers)
 print('done')
+
+
+
+popt = [1.00620913e+03, -9.31529767e-02]
+def exp_funk(x, a, b):
+    return a * np.exp(b*x)
+probs = exp_funk(np.arange(1, 49), *popt)/10188.568276854
 
 print('Start training loop')
 for epoch in tqdm(range(num_epochs)):
@@ -181,17 +190,24 @@ for epoch in tqdm(range(num_epochs)):
         # Generate batch of latent vectors
 #         noise = torch.randn(btch_sz, nz, 1, 1, 1, device=device)
         noise = torch.FloatTensor(btch_sz, 100, 1, 1, 1).uniform_(-1, 1)
-        # labels for Generator
-        gen_free_path = torch.Tensor(btch_sz, 1, 1, 1, 1).uniform_(1, 49).type(torch.int)
+        ###### labels for Generator #####
+        gen_free_path = torch.Tensor(btch_sz, 1, 1, 1, 1).uniform_(1, 50).type(torch.int)
+#         gen_free_path = torch.Tensor( np.random.choice(np.arange(1, 49), btch_sz, p=probs) )
+        gen_free_path = gen_free_path.view(btch_sz, 1, 1, 1, 1)
         gen_free_path = gen_free_path.to(device).float()
+        
+        
 #         gen_labels = np.random.uniform(10, 100, btch_sz)
 #         gen_labels = Variable(FloatTensor(gen_labels))
 #         gen_labels = gen_labels.view(btch_sz, 1, 1, 1, 1)*0
+
+        ##################################
 
         # Generate fake image batch with G
         fake_shower = netG(noise.to(device), gen_free_path)
 
         # Classify all fake batch with D
+        gen_free_path = 50 - gen_free_path
         output = netD(fake_shower, gen_free_path)
 
         # Calculate D's loss on the all-fake batch
@@ -216,7 +232,7 @@ for epoch in tqdm(range(num_epochs)):
         netG.zero_grad()
 
         # Forward pass of all-fake batch through D
-        gen_free_path = 48 - gen_free_path + 1
+#         gen_free_path = 48 - gen_free_path + 1
         output = netD(fake_shower, gen_free_path)
 
         # Calculate G's loss based on this output
@@ -248,7 +264,7 @@ for epoch in tqdm(range(num_epochs)):
     time_stats_epoch = np.append(time_stats_epoch, epoch_t)
     time_stats_calc = np.append(time_stats_calc, calculation_time)
 
-    if epoch%5 == 0:
+    if epoch%1 == 0:
         time_stats = np.array([time_stats_epoch, time_stats_calc])
         loss =  np.array([G_losses, D_losses])
         D_scores = np.array([D_scores_x, D_scores_z1, D_scores_z2])
