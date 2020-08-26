@@ -33,7 +33,7 @@ class Generator(nn.Module):
         )
 
     def forward(self, noise, free_path):
-        free_path = 48 - free_path + 1
+        free_path = 50 - free_path
         input = self.conv1(noise*free_path)
         return self.main_conv(input)
 
