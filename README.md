@@ -23,5 +23,7 @@ Gun properties :
     * part 2 (105.9k events): '/beegfs/desy/user/eren/data_generator/pion/hcal_only/uniform/pionP2.hdf5'
     * part 3 (96.8k events) : '/beegfs/desy/user/eren/data_generator/pion/hcal_only/uniform/pionP3.hdf5'
     * part 4 (76.8k events) : '/beegfs/desy/user/eren/data_generator/pion/hcal_only/uniform/pionP4.hdf5'
-    * Total : ~390k events
+    * part 5 (99.0k events) : '/beegfs/desy/user/eren/data_generator/pion/hcal_only/uniform/pionP5.hdf5'
+    * part 6 (27.9k events) : '/beegfs/desy/user/eren/data_generator/pion/hcal_only/uniform/pionP6.hdf5'
+    * Total : ~520k events
 
