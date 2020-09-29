@@ -1,0 +1,8 @@
+## output of wgan
+WGAN/output/
+
+### pycache 
+WGAN/models/__pycache__/
+
+## cache
+.cache/
