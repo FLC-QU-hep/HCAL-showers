@@ -136,3 +136,15 @@ class DCGAN_G(nn.Module):
         x = self.main_conv(input)
         x = x.view(-1, 48, 48, 48)
         return x
+
+
+def weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        nn.init.normal_(m.weight.data, 0.0, 0.02)
+    elif classname.find('LayerNorm') != -1:
+        nn.init.normal_(m.weight.data, 1.0, 0.02)
+        nn.init.constant_(m.bias.data, 0)
+    elif classname.find('Linear') != -1:
+        m.weight.data.normal_(0.0, 0.02)
+        m.bias.data.fill_(0)

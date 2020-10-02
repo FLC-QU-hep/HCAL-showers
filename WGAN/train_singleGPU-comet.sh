@@ -5,9 +5,9 @@
 #SBATCH --time=24:00:00     
 #SBATCH --constraint="V100"
 #SBATCH --chdir   /beegfs/desy/user/eren          # directory must already exist!
-#SBATCH --job-name  wGANv0
-#SBATCH --output    wGANv0-%N.out            # File to which STDOUT will be written
-#SBATCH --error     wGANv0-%N.err            # File to which STDERR will be written
+#SBATCH --job-name  wGANv1-bs100
+#SBATCH --output    wGANv1-bs100-%N.out            # File to which STDOUT will be written
+#SBATCH --error     wGANv1-bs100-%N.err            # File to which STDERR will be written
 #SBATCH --wait-all-nodes=1
 #SBATCH --mail-type END 
 
@@ -20,11 +20,10 @@ export SINGULARITY_TMPDIR=/beegfs/desy/user/eren/container/tmp/
 export SINGULARITY_CACHEDIR=/beegfs/desy/user/eren/container/cache/
 
 #name of the instance / experiment
-INS=wGANv1
+INS=wGANv1-bs100
 
 # necessary for output weights
 mkdir -p /beegfs/desy/user/eren/HCAL-showers/WGAN/output/$INS
 
 ## start the container
-#singularity run -H $PWD --nv docker://engineren/pytorch:latest python HCAL-showers/WGAN/wGAN.py
-singularity run -H $PWD --nv docker://engineren/pytorch:comet-ml python HCAL-showers/WGAN/wGAN-cometML.py
+python HCAL-showers/WGAN/wGAN-cometML.py

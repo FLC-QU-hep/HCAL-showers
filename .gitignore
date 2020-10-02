@@ -6,3 +6,8 @@ WGAN/models/__pycache__/
 
 ## cache
 .cache/
+
+## other unrelated stuff
+WGAN/.bash_history
+WGAN/MPI/
+WGAN/data/
