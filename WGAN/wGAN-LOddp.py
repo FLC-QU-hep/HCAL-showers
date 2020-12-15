@@ -149,7 +149,7 @@ def train(rank, defparams, hyper):
     for hp in hyper.keys():
         hyperp[hp] = hyper[hp]
 
-    experiment = Experiment(api_key="keGmeIz4GfKlQZlOP6cit4QOi",
+    experiment = Experiment(api_key="place-your-own-api-key",
                         project_name="hadron-shower", workspace="engineren")
     experiment.add_tag(params['exp'])
 
