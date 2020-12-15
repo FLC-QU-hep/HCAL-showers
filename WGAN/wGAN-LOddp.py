@@ -61,6 +61,32 @@ def calc_gradient_penalty(netD, real_data, fake_data, real_label, BATCH_SIZE, de
     gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
     return gradient_penalty
 
+
+def lat_opt_ngd(G,D,z, energy, batch_size, device, alpha=500, beta=0.1, norm=1000):
+    
+    z.requires_grad_(True)
+    x_hat = G(z.cuda(), energy)
+    x_hat = x_hat.unsqueeze(1) 
+    
+    f_z = D(x_hat, energy)
+
+    fz_dz = torch.autograd.grad(outputs=f_z,
+                                inputs= z,
+                                grad_outputs=torch.ones(f_z.size()).to(device),
+                                retain_graph=True,
+                                create_graph= True,
+                                   )[0]
+    
+    delta_z = torch.ones_like(fz_dz)
+    delta_z = (alpha * fz_dz) / (beta +  torch.norm(delta_z, p=2, dim=0) / norm)
+    #print(alpha * fz_dz, torch.norm(delta_z, p=2, dim=0), (beta +  torch.norm(delta_z, p=2, dim=0) / norm))
+    with torch.no_grad():
+        z_prime = torch.clamp(z + delta_z, min=-1, max=1) 
+        
+    return z_prime
+
+
+
 def mmd_hit_loss_cast_mean(recon_x, x, alpha=0.01): 
     # alpha = 1/2*sigma**2
     
@@ -299,15 +325,19 @@ def train(rank, defparams, hyper):
 
             real_label = batch['energy'] ## energy label
             real_label = real_label.to(device)
-           
+        
+            
+            #Latent space opt
+            z_prime = lat_opt_ngd(aG, aD, noise, real_label, real_label.size()[0], device)
+            ###
 
             with torch.no_grad():
-                noisev = noise  # totally freeze G, training D
-            
+                noisev = z_prime  # totally freeze G, training D
+
             fake_data = aG(noisev, real_label).detach()
             
 
-            real_data = batch['shower'] # 48x48x48 calo image
+            real_data = batch['shower'] # calo image
             real_data = real_data.to(device)
             real_data.requires_grad_(True)
 
@@ -383,13 +413,16 @@ def train(rank, defparams, hyper):
             real_label = real_label.to(device)
             
             
-            noise.requires_grad_(True)
+            #Latent space Opt
+            z_prime = lat_opt_ngd(aG, aD, noise, real_label, real_label.size()[0], device)
+            ###
 
-            
+            z_prime.requires_grad_(True)
+
             real_data = batch['shower'] # 48x48x48 calo image
             real_data = real_data.to(device)
 
-            fake_data = aG(noise, real_label.float())
+            fake_data = aG(z_prime, real_label.float())
             fake_data = fake_data.unsqueeze(1)  ## transform to [BS, 1, 48, 48, 48]
             
             
@@ -588,7 +621,7 @@ def main():
 
         ## IO parameters
         "output_path" : '/beegfs/desy/user/eren/HCAL-showers/WGAN/output/',
-        "exp" : 'wGANcorep14',                   ## where the models will be saved!
+        "exp" : 'wGANcoreLOp10',                   ## where the models will be saved!
         "data_dim" : 3,
         ## optimizer parameters 
         "opt" : 'Adam',
@@ -598,7 +631,7 @@ def main():
         ## checkpoint parameters
         "restore" : True,
         "restore_pp" : False,
-        "restore_path" : '/beegfs/desy/user/eren/HCAL-showers/WGAN/output/wGANcorep13/wgan_itrs_116200.pth',
+        "restore_path" : '/beegfs/desy/user/eren/HCAL-showers/WGAN/output/wGANcoreLOp9/wgan_itrs_58200.pth',
         "restore_path_PP": '',
         "calib_saved" : '/beegfs/desy/user/eren/HCAL-showers/WGAN/output/wGANv0/netE_itrs_1.pth',
         "post_saved" : 'netP_itrs_XXXX.pth',
@@ -611,9 +644,8 @@ def main():
         "nr" : 1,                   #Process id, set when launching
         "gpus" : 1,                 #For multi GPU Nodes, defines Number of GPU per node
         "gpu" : 0,                  #For multi GPU Nodes, defines index of GPUs on node
-        "DDP_init_file" : 'file:///beegfs/desy/user/eren/HCAL-showers/WGAN/MPI/dpp-corep14',
+        "DDP_init_file" : 'file:///beegfs/desy/user/eren/HCAL-showers/WGAN/MPI/dpp-coreLOp10',
         "multi_gpu":False,
-
         "seed": 32,
 
 
@@ -624,7 +656,7 @@ def main():
         "batch_size" : 100,
         "lambda" : 5,
         "kappa" : 0.0,
-        "ncrit" : 2,
+        "ncrit" : 4,
         "ngen" : 1,
         ## learning rate 
         "L_gen" : 1e-06,
