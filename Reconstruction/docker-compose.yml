@@ -12,6 +12,6 @@ services:
       - "8501:8501"
   reco:
     image: "ilcsoft/ilcsoft-centos7-gcc8.2:v02-01-pre"
-    command: ./reconstruction/marlin-reco.sh wgantest.slcio
+    command: ./marlin-reco.sh wgantest.slcio
     volumes:
-       - ~/synthetic-data-generator:/home/ilc/iLCInstall/ilcsoft
+       - ~/HCAL-showers/Reconstruction:/home/ilc/iLCInstall/ilcsoft

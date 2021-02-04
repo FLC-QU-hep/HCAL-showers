@@ -11,3 +11,9 @@ WGAN/models/__pycache__/
 WGAN/.bash_history
 WGAN/MPI/
 WGAN/data/
+
+## reco
+Reconstruction/*.root
+Reconstruction/*.slcio
+Reconstruction/ILDConfig/
+

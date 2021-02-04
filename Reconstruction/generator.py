@@ -300,7 +300,7 @@ def write_to_lcio(showers, energy, model_name, outfile, N):
     progress_bar = st.progress(0)
 
     ## get the dictionary
-    f = open('cell_maps/cell-map_HCAL_full.pickle', 'rb')
+    f = open('cell_maps/cell-map_HCAL.pickle', 'rb')
     cmap = pickle.load(f)  
     
     #pbar_cache = pkbar.Pbar(name='Writing to lcio files', target=N)
@@ -318,7 +318,7 @@ def write_to_lcio(showers, energy, model_name, outfile, N):
     charge = 1
     mass = 1.40e-01 
     #decayLen = 1.e32 
-    pdg = 221
+    pdg = 211
 
 
     # write a RunHeader
@@ -376,7 +376,7 @@ def write_to_lcio(showers, energy, model_name, outfile, N):
         col.setFlag( flag.getFlag() )
 
         col.parameters().setValue(EVENT.LCIO.CellIDEncoding, 'system:0:5,module:5:3,stave:8:4,tower:12:5,layer:17:6,slice:23:4,x:32:-16,y:48:-16')
-        evt.addCollection( col , "HCalBarrelRPCHits" )
+        evt.addCollection( col , "HcalBarrelRegCollection" )
 
         
 
@@ -441,7 +441,7 @@ if __name__ == "__main__":
     if wgan_check:
         showers, energy = shower_photons(nevts, model_name, bsize, emax, emin)
         write_to_lcio(showers, energy, model_name, output_lcio, nevts)
-        make_plots(showers)
+        #make_plots(showers)
     
     reco = st.checkbox('Run Reconstruction in iLCSoft')
     if reco and not os.path.exists(os.getcwd() + '/rec.lock'):
