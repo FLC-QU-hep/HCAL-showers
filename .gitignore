@@ -15,5 +15,10 @@ WGAN/data/
 ## reco
 Reconstruction/*.root
 Reconstruction/*.slcio
+Reconstruction/*.npy
 Reconstruction/ILDConfig/
+Reconstruction/weights/
+Reconstruction/40GeV/
+Reconstruction/output/
+Reconstruction/singleEnergy/
 

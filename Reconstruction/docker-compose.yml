@@ -1,17 +1,18 @@
 version: "3.3"
 services:
   generator:
-    image: "ilcsoft/py3lcio:lcio-15-04_v3"
+    image: "ilcsoft/py3lcio:lcio-16"
     volumes:
        - ~/HCAL-showers/Reconstruction:/home/ilc/datagen
     command: >
-      bash -c "source datagen/set_env.sh 
+      bash -c "source datagen/set_env.sh
+      && pip install dill 
       && cd datagen 
-      && streamlit run generator.py -- --output wgantest.slcio --nbsize 100" 
+      && streamlit run generator.py -- --nbsize 10 --output wgan_40GeV --model wgan" 
     ports:
       - "8501:8501"
   reco:
     image: "ilcsoft/ilcsoft-centos7-gcc8.2:v02-01-pre"
-    command: ./marlin-reco.sh wgantest.slcio
+    command: ./marlin-reco.sh wgan_40GeV.slcio 
     volumes:
        - ~/HCAL-showers/Reconstruction:/home/ilc/iLCInstall/ilcsoft

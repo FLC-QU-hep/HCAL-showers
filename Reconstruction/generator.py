@@ -5,16 +5,16 @@ import array as arr
 import torch.utils.data
 from torch import nn, optim
 from torch.nn import functional as F
-import models.dcgan3Dcore as WGAN_Models
-#import models.VAE_models as VAE_Models
-#import models.GAN as VGAN
+import models.dcgan3Dcore25 as WGAN_Models
+from models.dcgan3Dcore25 import *
+from models.bibae import *
 
 
 import streamlit as st
 #import pkbar
 import time
 import os 
-import pickle
+import dill as pickle
 import random
 
 import matplotlib.pyplot as plt
@@ -64,6 +64,21 @@ def getTotE(data, xbins, ybins, layers=30):
     etot_arr = np.sum(data, axis=(1))
     return etot_arr
 
+
+def correctSpinalProfileFake(data, xbins, ybins, layers):
+    data = np.reshape(data,[-1, layers, xbins*ybins])
+    #correct layers 8-15 by a factor 
+    data[:,8:18,:] = data[:,8:18,:] * 0.82
+    data = np.reshape(data,[-1, layers, xbins, ybins])
+    return data
+
+
+def calibrate(data, xbins, ybins, layers, sfac=1.00):
+    data = np.reshape(data,[-1, layers, xbins*ybins]) 
+    data[:,:,:] = data[:,:,:] * sfac
+    data = np.reshape(data,[-1, layers, xbins, ybins])
+    return data
+
 def make_plots(fake_data):
     
     status_text = st.empty()
@@ -103,8 +118,123 @@ def lat_opt_ngd(G,D,z, energy, batch_size, device, alpha=500, beta=0.1, norm=100
         
     return z_prime
 
+def shower_particles(nevents, model, bsize, emax, emin): 
+    
+    cuda = torch.cuda.is_available()
+    device = torch.device("cuda" if cuda else "cpu")
+
+    if model == 'wgan':
+        
+        LATENT_DIM = 100
+        ngf = 32
+        ndf = 32
+        model_WGAN = WGAN_Models.DCGAN_G(ngf,LATENT_DIM).to(device)
+        model_WGAN = nn.DataParallel(model_WGAN)
+        weightsGAN = 'weights/wgan.pth'
+        checkpoint = torch.load(weightsGAN, map_location=torch.device(device))
+        model_WGAN.load_state_dict(checkpoint['Generator'])
+        
+        
+        showers, energy = wGAN_ENR(model_WGAN, nevents, emax, emin, bsize, LATENT_DIM, device)
+        energy = energy.flatten()
+
+    else:
+        
+        LATENT_DIM_SML = 24
+        LATENT_DIM = 512
+        args = {
+                'E_cond' : True,
+                'latent' : LATENT_DIM
+        }
+
+        checkpoint_BAE = torch.load('weights/bibae.pth', map_location=torch.device(device))
+        model_BAE = BiBAE_F_3D_BatchStat_Core25(args, device=device, z_rand=LATENT_DIM-LATENT_DIM_SML, z_enc=LATENT_DIM_SML).to(device)   
+        model_BAE = nn.DataParallel(model_BAE)
+        model_BAE.load_state_dict(checkpoint_BAE['model_state_dict'])
+
+        model_BAE27_P = PostProcess_Size1Conv_EcondV2_Core25(bias=True, out_funct='none').to(device)
+        model_BAE27_P = nn.DataParallel(model_BAE27_P)
+        model_BAE27_P.load_state_dict(checkpoint_BAE['model_P_state_dict'])
+
+        file='weights/Latent_Data_New_KDE_ep17.pkl'
+        with open(file, 'rb') as f:
+            kde_BAE27 = pickle.load(f)
+        
+        showers, energy = bibAE(model_BAE, model_BAE27_P, nevents, emax/100.0, emin/100.0, LATENT_DIM, kde_BAE27,  
+                                     device='cpu', thresh = 0.00 )
+        energy = energy.flatten()
 
 
+    
+    return showers, energy
+
+
+
+def wGAN_ENR(model, number, E_max, E_min, batchsize, latent_dim, device):
+
+    thresh = 0.5*0.5
+    fake_list=[]
+    energy_list = []
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    status_text.text("Generating {} pion showers. Current models is WGAN".format(number))
+
+    model.eval()
+    for i in np.arange(0, number, batchsize):
+        with torch.no_grad():
+           
+            
+            noise = torch.FloatTensor(batchsize, latent_dim, 1,1,1).uniform_(-1, 1)
+            noise = noise.view(-1, latent_dim, 1,1,1)
+            noise = noise.to(device)
+            
+            
+            input_energy = torch.FloatTensor(batchsize ,1).to(device) 
+            input_energy.resize_(batchsize,1,1,1,1).uniform_(E_min, E_max)
+
+
+            fake = model(noise, input_energy)
+            fake = fake.data.cpu().numpy()
+            
+            #fake[fake < thresh] = 0.0
+            fake_list.append(fake)
+            energy_list.append(input_energy.data.cpu().numpy())
+
+            
+            progress_bar.progress(int(i* 100 / number))            
+            
+
+
+    energy_full = np.vstack(energy_list)
+    fake_full = np.vstack(fake_list)
+    
+    if E_max != E_min: 
+     
+        fake_full = fake_full.reshape(len(fake_full), 48, 25, 25)
+        return fake_full, energy_full
+    
+    else:
+        
+        with open('scale_factors.txt') as f:
+            arr = []
+            for line in f:
+                arr.append([float(x) for x in line.split()])
+        
+        arrnp = np.asarray(arr)
+        idx = np.where(arrnp[:,0] == round(E_max,2))
+        sf = arrnp[idx[0][0]][1]
+        #print("applying SF: ", sf, "to Energy: ",E_max, E_min )
+        status_text.text("applying SF: {} to Energy: {}, {}".format(sf, E_max, E_min))
+        fake_full_calb = calibrate(fake_full, xbins=25, ybins=25, layers=48, sfac=sf)
+        return fake_full_calb, energy_full
+    
+
+
+    
+
+    
 
 def wGAN(model, model_aD, number, E_max, E_min, batchsize, fixed_noise, input_energy, device):
 
@@ -117,17 +247,17 @@ def wGAN(model, model_aD, number, E_max, E_min, batchsize, fixed_noise, input_en
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    status_text.text("Generating {} photon showers. Current models is WGAN-LO".format(number))
+    status_text.text("Generating {} pion showers. Current models is WGAN-LO".format(number))
 
     for i in np.arange(batchsize, number+1, batchsize):
         
        
         input_energy.uniform_(E_min,E_max)
-        z_prime = lat_opt_ngd(model, model_aD, fixed_noise, input_energy, batchsize, device)
+        #z_prime = lat_opt_ngd(model, model_aD, fixed_noise, input_energy, batchsize, device)
         
         with torch.no_grad():
            
-            fake = model(z_prime, input_energy)
+            fake = model(fixed_noise, input_energy)
             fake = fake.data.cpu().numpy()
             
             fake[fake < thresh] = 0.0
@@ -140,13 +270,33 @@ def wGAN(model, model_aD, number, E_max, E_min, batchsize, fixed_noise, input_en
 
     energy_full = np.vstack(energy_list)
     fake_full = np.vstack(fake_list)
-    fake_full = fake_full.reshape(len(fake_full), 48, 13, 13)
+    fake_full = fake_full.reshape(len(fake_full), 48, 25, 25)
+
+
+    if (E_max+E_min)/2.0 < 70:
+        fake_full_corr = correctSpinalProfileFake(fake_full, xbins=25, ybins=25, layers=48)
+        #fake_full_corr = fake_full
+        print ("turning corrections on")   
+
+    elif (round(E_max,2)+round(E_min,2))/2.0 == 70:
+        fake_full_corr = correctSpinalProfileFakeHighE(fake_full, xbins=25, ybins=25, layers=48, sfac=0.94)
+        print ("correcting 70GeV")
+    
+    elif (round(E_max,2)+round(E_min,2))/2.0 == 80:
+        fake_full_corr = correctSpinalProfileFakeHighE(fake_full, xbins=25, ybins=25, layers=48, sfac=0.98)
+        print ("correcting 80GeV")
+    
+    elif (round(E_max,2)+round(E_min,2))/2.0 == 90:
+        fake_full_corr = correctSpinalProfileFakeHighE(fake_full, xbins=25, ybins=25, layers=48, sfac=1.03)
+        print ("correcting 90GeV")
+    else:
+        fake_full_corr = fake_full
 
     
-    progress_bar.empty()
+    #progress_bar.empty()
     
 
-    return fake_full, energy_full
+    return fake_full_corr, energy_full
 
 
 def vGAN(model, number, E_max, E_min, batchsize, fixed_noise, input_energy, device):
@@ -175,120 +325,99 @@ def vGAN(model, number, E_max, E_min, batchsize, fixed_noise, input_energy, devi
 
     return fake_full, energy_full
 
-def BibAE(model, model_PostProcess, number, E_max, E_min, batchsize, latent_dim,  device='cpu', thresh=0.0):
- 
-    if device == 'cuda': 
-        z = torch.cuda.FloatTensor(batchsize, latent_dim)
-        E = torch.cuda.FloatTensor(batchsize, 1)
-    else :
-        z = torch.FloatTensor(batchsize, latent_dim)
-        E = torch.FloatTensor(batchsize, 1)
-        
+def bibAE(model, model_PostProcess, number, E_max, E_min, latent_dim, kde,  
+                                     device='cpu', thresh=0.0):
+    
+    z_size = 48
+    x_size = 25
+    y_size = 25
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
 
-    fake_list=[]
-    energy_list = []
 
+    batchsize = 100
+    fake_list = []
+    fakePP_list = []
+    latent_list=[]
+    fake_uncut_list = []
+    E_list = []
+    
+    
+    ## for modifiy one latent dimension with certain mean and std
+    ## load kde kernel as pkl file (a probability density function)
+
+    latent_sml = 24     # shape of the kde kernel / the small latent space dimension
+
+    model.eval()
+    model_PostProcess.eval()
     for i in np.arange(0, number, batchsize):
         with torch.no_grad():
-            z.normal_()
-            E.uniform_(E_min, E_max)
+            
+            latent = []
+            E = []
+            numberAccepted = 0
+            while numberAccepted < batchsize:
+                kde_sample = kde.resample(10000).T
+                kde_latent = kde_sample[:, :latent_sml]
+                kde_energy = kde_sample[:, latent_sml:]
+                
+                energy_mask = (kde_energy[:,0] < (E_max*100.0+0.1)) & (kde_energy[:,0] > (E_min*100.0-0.1))  
+                
+                kde_latent_masked = kde_latent[energy_mask]
+                kde_energy_masked = kde_energy[energy_mask]
+                
+                
+                numberAccepted += kde_latent_masked.shape[0]
+                
+                normal_sample = torch.randn(kde_latent_masked.shape[0], latent_dim - latent_sml)
+                latent.append(torch.cat((torch.from_numpy(np.float32(kde_latent_masked)), normal_sample), dim=1))
+                E.append(torch.from_numpy(np.float32(kde_energy_masked)))
+            
+            
+            latent = torch.cat((latent)).to(device)[:batchsize]
+            E = torch.cat((E), 0).to(device)[:batchsize]
+            x = torch.zeros(batchsize, latent_dim, device=device)
+            z = latent
+            
+            
+            data = model(x=x, E_true=E, 
+                            z = z,  mode='decode')                
+                        
+            latent = torch.cat((z, E), dim=1)
+
+            latent = latent.cpu().numpy()
+
+            dataPP = model_PostProcess.forward(data, E)
+            
+            
+            data = data.view(-1, z_size, x_size, y_size).cpu().numpy() 
+            dataPP = dataPP.view(-1, z_size, x_size, y_size).cpu().numpy() 
+            #print(ratio)
+            progress_bar.progress(int(i* 100 / number))
            
-            data = model(x=z, E_true=E, z=z, mode='decode')
-            dataPP = F.relu(model_PostProcess.forward(data, E))
+        data_uncut = np.array(dataPP)
+        data_uncut[ data_uncut < 0.005] = 0.0  
+        fake_uncut_list.append(data_uncut)
 
-            dataPP = dataPP.data.cpu().numpy()
-            #data = data.data.cpu().numpy()
-            
-            ## hard cut for noisy images
-            #dataPP[dataPP < 0.001] = 0.00
-            
-            fake_list.append(data)
-            energy_list.append(E.data.cpu().numpy())
-    
-    fake_full = np.vstack(fake_list)
-    energy_full = np.vstack(energy_list)
-    fake_full = fake_full.reshape(len(fake_full), 30, 30, 30)
-
-    return fake_full, energy_full
-
-
-
-def shower_photons(nevents, model, bsize, emax, emin): 
-    cuda = torch.cuda.is_available()
-    device = torch.device("cuda" if cuda else "cpu")
-    
-    if model == 'wgan':
-        LATENT_DIM = 100
-        ngf = 32
-        ndf = 32
-        model_WGAN = WGAN_Models.DCGAN_G(ngf,LATENT_DIM).to(device)
-        model_WGAN_aD = WGAN_Models.DCGAN_D(ndf).to(device)
+        data[ data < thresh] = 0.0  
+        dataPP[ dataPP < thresh] = 0.0  
         
-        model_WGAN = nn.DataParallel(model_WGAN)
-        model_WGAN_aD = nn.DataParallel(model_WGAN_aD)
 
-        
-        weightsGAN = 'weights/wgan.pth'
-        checkpoint = torch.load(weightsGAN, map_location=torch.device('cpu'))
-        model_WGAN.load_state_dict(checkpoint['Generator'])
-        model_WGAN_aD.load_state_dict(checkpoint['Critic'])
+        fake_list.append(data)
+        E_list.append(E)
+        fakePP_list.append(dataPP)
+        latent_list.append(latent)
+        #print(i)
 
-        
-        if cuda:
-            noise = torch.cuda.FloatTensor(bsize, LATENT_DIM, 1,1,1).uniform_(-1, 1)
-            energy = torch.cuda.FloatTensor(bsize, 1,1,1,1)
-        else:
-            noise = torch.FloatTensor(bsize, LATENT_DIM, 1,1,1).uniform_(-1, 1)
-            energy = torch.FloatTensor(bsize, 1,1,1,1) 
-    
-        
-        showers, energy = wGAN(model_WGAN, model_WGAN_aD, nevents, emax, emin, bsize, noise, energy, device)
-        energy = energy.flatten()
-    
-    elif model == 'vgan':
-        netG = VGAN.Generator(1).to(device)
-        #netG = nn.DataParallel(netG)
-        w = 'weights/vgan.pth'
-        checkpoint = torch.load(w, map_location=torch.device(device))
-        netG.load_state_dict(checkpoint['Generator'])
+    data_full = np.vstack(fake_list)
+    dataPP_full = np.vstack(fakePP_list)
+    latent_full = np.vstack(latent_list)
+    E_full =  np.vstack(E_list)
+    data_uncut_full = np.vstack(fake_uncut_list)
 
-        LATENT_DIM = 100
-        if cuda:
-            noise = torch.cuda.FloatTensor(bsize, LATENT_DIM, 1,1,1)
-            energy = torch.cuda.FloatTensor(bsize, 1,1,1,1)
-        else:
-            noise = torch.FloatTensor(bsize, LATENT_DIM, 1,1,1)
-            energy = torch.FloatTensor(bsize, 1,1,1,1) 
-    
-        
-        showers, energy = vGAN(netG, nevents, emax, emin, bsize, noise, energy, device)
-        energy = energy.flatten()
-
-
-
-    elif model == 'bib-ae':
-        args = {
-        'E_cond' : True,
-        'latent' : 512
-        }
-
-        model = VAE_Models.BiBAE_F_3D_LayerNorm_SmallLatent(args, device=device, z_rand=512-24,
-                                                        z_enc=24).to(device) 
-
-        model = nn.DataParallel(model)
-        checkpoint = torch.load('weights/bib-ae-PP.pth', map_location=torch.device(device))
-
-        model.load_state_dict(checkpoint['model_state_dict'])
-
-        model_P = VAE_Models.PostProcess_Size1Conv_EcondV2(bias=True, out_funct='none').to(device)
-        model_P = nn.DataParallel(model_P)
-        
-        model_P.load_state_dict(checkpoint['model_P_state_dict'])
-        
-        showers, energy = BibAE(model, model_P, nevents, emax, emin, bsize, 512, device)
-        energy = energy.flatten()
-    
-    return showers, energy  
+    #print(data_full.shape)
+    return dataPP_full, E_full
 
 
 def write_to_lcio(showers, energy, model_name, outfile, N):
@@ -421,29 +550,35 @@ if __name__ == "__main__":
     bsize = parse_args.nbsize
 
     model_name = parse_args.model
-    output_lcio = parse_args.output
+    
 
     
 
-    wgan_check = st.checkbox('Generate photons with WGAN model')
+    wgan_check = st.checkbox('Generate pions with WGAN model')
+    bibae_check = st.checkbox('Generate pions with BiB-AE model')
     
-    nevts = st.slider( 'Number of photon showers', 100, 5000, 500, step=bsize)
+    nevts = st.slider( 'Number of pion showers', 100, 5000, 500, step=bsize)
+    evalues = st.slider( 'Select a range of pion energies', 0, 100, (25, 75))
 
-    evalues = st.slider( 'Select a range of photon energies', 0.0, 100.0, (25.0, 75.0))
-
-   
 
     emin=evalues[0]
     emax=evalues[1]
 
-    
+    output_lcio = parse_args.output
 
     if wgan_check:
-        showers, energy = shower_photons(nevts, model_name, bsize, emax, emin)
+        showers, energy = shower_particles(nevts, model_name, bsize, emax, emin)
         write_to_lcio(showers, energy, model_name, output_lcio, nevts)
-        #make_plots(showers)
+    elif bibae_check:
+        #showers, energy = shower_particles(nevts, model_name, bsize, emax, emin)
+        sh = np.load('./singleEnergy/Showers_G4_90GeV_punch.npy')
+        enr = np.load('./singleEnergy/Showers_Energy_ep141_90GeV.npy')
+        showers = sh[:1750]
+        energy = enr[:1750]
+        write_to_lcio(showers, energy, model_name, output_lcio, 1750)    
+    
     
     reco = st.checkbox('Run Reconstruction in iLCSoft')
     if reco and not os.path.exists(os.getcwd() + '/rec.lock'):
-            os.mknod(os.getcwd() + '/rec.lock')
+        os.mknod(os.getcwd() + '/rec.lock')
 
